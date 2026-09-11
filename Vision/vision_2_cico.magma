@@ -1,0 +1,457 @@
+SetSeed(20260609);
+
+NR := 2;
+MAX_INSTANCE_TRIES := 200;
+
+// -----------------------------------------------------------------------------
+// Field: AES polynomial x^8 + x^4 + x^3 + x + 1
+// -----------------------------------------------------------------------------
+F2<X> := PolynomialRing(GF(2));
+F<t> := ext<GF(2) | X^8 + X^4 + X^3 + X + 1>;
+basis := [ F!1 ] cat [ t^i : i in [1..7] ];
+
+// -----------------------------------------------------------------------------
+// Basic maps
+// -----------------------------------------------------------------------------
+function InvElt(x)
+    if x eq Parent(x)!0 then
+        return Parent(x)!0;
+    end if;
+    return x^-1;
+end function;
+
+function B3map(x, b0, b1, b2, b3)
+    P := Parent(x);
+    return P!b0 + (P!b1)*x + (P!b2)*x^2 + (P!b3)*x^4;
+end function;
+
+// x^4 B(x^{-1}) = b0*x^4 + b1*x^3 + b2*x^2 + b3.
+function Btmap(x, b0, b1, b2, b3)
+    P := Parent(x);
+    return (P!b0)*x^4 + (P!b1)*x^3 + (P!b2)*x^2 + P!b3;
+end function;
+
+function SeqToF(seq)
+    return &+[ (F!seq[i])*basis[i] : i in [1..8] ];
+end function;
+
+function BuildLmat(b1, b2, b3)
+    rows := [ Eltseq(b1*basis[j] + b2*basis[j]^2 + b3*basis[j]^4)
+              : j in [1..8] ];
+    return Matrix(GF(2), 8, 8, &cat rows);
+end function;
+
+function B3invElt(y, b0, Lmati)
+    v := Vector(GF(2), Eltseq(y + b0)) * Lmati;
+    return SeqToF(Eltseq(v));
+end function;
+
+function RandomNonzero()
+    repeat
+        x := Random(F);
+    until x ne F!0;
+    return x;
+end function;
+
+function RandomB3Data()
+    repeat
+        b0 := Random(F);
+        b1 := Random(F);
+        b2 := Random(F);
+        b3 := RandomNonzero();
+        Lmat := BuildLmat(b1, b2, b3);
+    until Rank(Lmat) eq 8;
+    return b0, b1, b2, b3, Lmat, Lmat^-1;
+end function;
+
+function RandomMix()
+    repeat
+        M := Matrix(F, 2, 2, [ RandomNonzero() : i in [1..4] ]);
+    until Determinant(M) ne F!0;
+    return M, M^-1;
+end function;
+
+function MixAdd(x, y, M, c)
+    return M[1,1]*x + M[1,2]*y + c[1],
+           M[2,1]*x + M[2,2]*y + c[2];
+end function;
+
+// -----------------------------------------------------------------------------
+// Vision evaluation
+// -----------------------------------------------------------------------------
+function ForwardWithGeneric(x, y, b0, b1, b2, b3, Lmati, M, sigma, eps)
+    gen := true;
+
+    for r in [1..NR] do
+        // For round 1, y=0 is the fixed CICO boundary coordinate and is
+        // not counted as an internal denominator condition.
+        if r gt 1 and (x eq F!0 or y eq F!0) then
+            gen := false;
+        end if;
+
+        x := InvElt(x);
+        y := InvElt(y);
+
+        x := B3invElt(x, b0, Lmati);
+        y := B3invElt(y, b0, Lmati);
+
+        x, y := MixAdd(x, y, M, sigma[r]);
+
+        // Input to the second inversion layer of the round.
+        if x eq F!0 or y eq F!0 then
+            gen := false;
+        end if;
+
+        x := InvElt(x);
+        y := InvElt(y);
+
+        x := B3map(x, b0, b1, b2, b3);
+        y := B3map(y, b0, b1, b2, b3);
+
+        x, y := MixAdd(x, y, M, eps[r]);
+    end for;
+
+    return x, y, gen;
+end function;
+
+function BruteForceGenericCICO(b0, b1, b2, b3, Lmati, M, sigma, eps)
+    genSols := [ F | ];
+
+    for X1 in F do
+        y1, y2, gen :=
+            ForwardWithGeneric(X1, F!0, b0, b1, b2, b3, Lmati, M, sigma, eps);
+
+        if y2 eq F!0 and gen then
+            Append(~genSols, X1);
+        end if;
+    end for;
+
+    return genSols;
+end function;
+
+// -----------------------------------------------------------------------------
+// Polynomial utilities
+// -----------------------------------------------------------------------------
+function ReduceField(f)
+    P := Parent(f);
+
+    if f eq P!0 then
+        return f;
+    end if;
+
+    C, Mons := CoefficientsAndMonomials(f);
+    out := P!0;
+
+    for j in [1..#C] do
+        E := Exponents(Mons[j]);
+
+        // Reduce as a polynomial function on GF(2^8):
+        // x^e -> x^(((e-1) mod 255)+1) for e>0.
+        NE := [ (E[k] eq 0) select 0 else ((E[k]-1) mod 255)+1
+                : k in [1..#E] ];
+
+        out +:= C[j] * Monomial(P, NE);
+    end for;
+
+    return out;
+end function;
+
+function ResVar(f, g, idx)
+    return ReduceField(Resultant(f, g, idx));
+end function;
+
+procedure PrintDegs(label, f)
+    P := Parent(f);
+    print label;
+    printf "  total_degree=%o, terms=%o\n", TotalDegree(f), #Monomials(f);
+    for i in [1..Rank(P)] do
+        printf "  deg[%o]=%o\n", i, Degree(f, i);
+    end for;
+end procedure;
+
+function UniqueFSeq(S)
+    U := [ F | ];
+    for x in S do
+        if not (x in U) then
+            Append(~U, x);
+        end if;
+    end for;
+    return U;
+end function;
+
+function UniquePairSeq(S)
+    U := [ <F!0,F!0> : i in [1..0] ];
+
+    for p in S do
+        seen := false;
+        for q in U do
+            if p[1] eq q[1] and p[2] eq q[2] then
+                seen := true;
+                break;
+            end if;
+        end for;
+
+        if not seen then
+            Append(~U, p);
+        end if;
+    end for;
+
+    return U;
+end function;
+
+function IsSubsetSeq(A, B)
+    for x in A do
+        if not (x in B) then
+            return false;
+        end if;
+    end for;
+    return true;
+end function;
+
+// -----------------------------------------------------------------------------
+// Build the four equations.
+//
+// Variable order:
+//   1=v1, 2=u1, 3=v2, 4=u2.
+//
+// (v1,u1): state before the B layer of step 2.
+// (v2,u2): state after the B^{-1} layer of step 3.
+//
+// For N=2, rho=2 and (v2,u2) is the middle state.
+// -----------------------------------------------------------------------------
+function BuildEquations(b0, b1, b2, b3, alpha, M, Mi, sigma, eps)
+    R<v1,u1,v2,u2> := PolynomialRing(F, 4);
+
+    // Input constraint.
+    cL := alpha + Mi[2,1]*sigma[1][1] + Mi[2,2]*sigma[1][2];
+    fl := cL*v1*u1 + Mi[2,1]*u1 + Mi[2,2]*v1;
+
+    // Middle equations for even N, with denominators cleared.
+    Bv2 := B3map(v2, b0, b1, b2, b3);
+    Bu2 := B3map(u2, b0, b1, b2, b3);
+
+    cv := Mi[1,1]*eps[1][1] + Mi[1,2]*eps[1][2];
+    cu := Mi[2,1]*eps[1][1] + Mi[2,2]*eps[1][2];
+
+    fv1 := (B3map(v1, b0, b1, b2, b3) + cv)*Bv2*Bu2
+           + Mi[1,1]*Bu2 + Mi[1,2]*Bv2;
+
+    fu1 := (B3map(u1, b0, b1, b2, b3) + cu)*Bv2*Bu2
+           + Mi[2,1]*Bu2 + Mi[2,2]*Bv2;
+
+    // Output constraint, already in the middle-state variables.
+    t1 := M[1,1]*v2 + M[1,2]*u2 + sigma[2][1];
+    t2 := M[2,1]*v2 + M[2,2]*u2 + sigma[2][2];
+
+    fr :=
+        M[2,1]*Btmap(t1, b0, b1, b2, b3)*t2^4
+        + M[2,2]*Btmap(t2, b0, b1, b2, b3)*t1^4
+        + eps[2][2]*t1^4*t2^4;
+
+    return R,
+           ReduceField(fl),
+           ReduceField(fv1),
+           ReduceField(fu1),
+           ReduceField(fr);
+end function;
+
+// Recover the CICO input from a candidate middle pair (v2,u2).
+function RecoverXFromPair(vv, uu, fl, fv1, fu1,
+                          alpha, b0, b1, b2, b3, Mi, sigma)
+    xs := [ F | ];
+
+    for a in F do
+        if a eq F!0 then
+            continue;
+        end if;
+
+        for b in F do
+            if b eq F!0 then
+                continue;
+            end if;
+
+            vals := [ a, b, vv, uu ];
+
+            if Evaluate(fl, vals) eq F!0 and
+               Evaluate(fv1, vals) eq F!0 and
+               Evaluate(fu1, vals) eq F!0 then
+
+                w11 := Mi[1,1]*(a^-1 + sigma[1][1])
+                       + Mi[1,2]*(b^-1 + sigma[1][2]);
+
+                w12 := Mi[2,1]*(a^-1 + sigma[1][1])
+                       + Mi[2,2]*(b^-1 + sigma[1][2]);
+
+                if w12 eq alpha then
+                    X1 := InvElt(B3map(w11, b0, b1, b2, b3));
+                    Append(~xs, X1);
+                end if;
+            end if;
+        end for;
+    end for;
+
+    return UniqueFSeq(xs);
+end function;
+
+// -----------------------------------------------------------------------------
+// 1. Generate a reproducible instance with a generic CICO-1 solution.
+// -----------------------------------------------------------------------------
+found := false;
+
+for trial in [1..MAX_INSTANCE_TRIES] do
+    b0, b1, b2, b3, Lmat, Lmati := RandomB3Data();
+    alpha := B3invElt(F!0, b0, Lmati);
+
+    M, Mi := RandomMix();
+
+    sigma := [ [ Random(F), Random(F) ] : i in [1..NR] ];
+    eps   := [ [ Random(F), Random(F) ] : i in [1..NR] ];
+
+    bruteGen :=
+        BruteForceGenericCICO(b0, b1, b2, b3, Lmati, M, sigma, eps);
+
+    if #bruteGen gt 0 then
+        found := true;
+        break;
+    end if;
+end for;
+
+if not found then
+    error "No suitable instance found. Increase MAX_INSTANCE_TRIES or change SetSeed.";
+end if;
+
+print "==== Instance ====";
+printf "b0=%o\nb1=%o\nb2=%o\nb3=%o\n", b0, b1, b2, b3;
+printf "alpha=B3inv(0)=%o\n", alpha;
+print "M="; print M;
+print "Mi="; print Mi;
+print "sigma="; print sigma;
+print "eps="; print eps;
+printf "bruteGenericSols (#%o)=%o\n", #bruteGen, bruteGen;
+
+// -----------------------------------------------------------------------------
+// 2. Build the polynomial system.
+// -----------------------------------------------------------------------------
+t_all := Cputime();
+
+R, fl, fv1, fu1, fr :=
+    BuildEquations(b0, b1, b2, b3, alpha, M, Mi, sigma, eps);
+
+print "==== Initial equations ====";
+PrintDegs("fl", fl);
+PrintDegs("fv1", fv1);
+PrintDegs("fu1", fu1);
+PrintDegs("fr", fr);
+
+// -----------------------------------------------------------------------------
+// 3. Input side: direct Res_u1, then direct Res_v1.
+// -----------------------------------------------------------------------------
+print "==== Input side ====";
+
+PrintDegs("Before A=Res_u1(fl,fu1): fl", fl);
+PrintDegs("Before A=Res_u1(fl,fu1): fu1", fu1);
+
+tt := Cputime();
+A := ResVar(fl, fu1, 2);
+printf "A=Res_u1 done in %o sec\n", Cputime(tt);
+PrintDegs("A", A);
+
+printf "Second intermediate Sylvester size = %o + %o = %o\n",
+       Degree(A,1), Degree(fv1,1), Degree(A,1)+Degree(fv1,1);
+
+PrintDegs("Before FL=Res_v1(A,fv1): A", A);
+PrintDegs("Before FL=Res_v1(A,fv1): fv1", fv1);
+
+tt := Cputime();
+FL := ResVar(A, fv1, 1);
+printf "FL=Res_v1 done in %o sec\n", Cputime(tt);
+PrintDegs("FL", FL);
+
+// For N=2, the output constraint is already the right-side polynomial.
+FR := fr;
+
+print "==== Middle-state polynomials ====";
+PrintDegs("FL", FL);
+PrintDegs("FR", FR);
+
+// -----------------------------------------------------------------------------
+// 4. Final bivariate resultant and solving over GF(2^8).
+// -----------------------------------------------------------------------------
+print "==== Merge and solve ====";
+
+PrintDegs("Before H=Res_v2(FL,FR): FL", FL);
+PrintDegs("Before H=Res_v2(FL,FR): FR", FR);
+
+tt := Cputime();
+H := ResVar(FL, FR, 3);
+printf "H=Res_v2(FL,FR) done in %o sec\n", Cputime(tt);
+PrintDegs("H", H);
+
+if H eq R!0 then
+    print "WARNING: final resultant is zero; scanning all u2 values.";
+    u2Roots := [ x : x in F ];
+else
+    u2Roots :=
+        [ uu : uu in F |
+          Evaluate(H, [F!0, F!0, F!0, uu]) eq F!0 ];
+end if;
+
+printf "u2 roots from H (#%o)=%o\n", #u2Roots, u2Roots;
+
+pairCands := [ <F!0,F!0> : i in [1..0] ];
+
+for uu in u2Roots do
+    for vv in F do
+        vals := [ F!0, F!0, vv, uu ];
+
+        if Evaluate(FL, vals) eq F!0 and
+           Evaluate(FR, vals) eq F!0 then
+            Append(~pairCands, <vv, uu>);
+        end if;
+    end for;
+end for;
+
+pairCands := UniquePairSeq(pairCands);
+printf "meeting pairs (v2,u2) (#%o)=%o\n", #pairCands, pairCands;
+
+// -----------------------------------------------------------------------------
+// 5. Recover inputs, verify them, and check generic completeness.
+// -----------------------------------------------------------------------------
+rawX := [ F | ];
+
+for p in pairCands do
+    xs := RecoverXFromPair(
+        p[1], p[2], fl, fv1, fu1,
+        alpha, b0, b1, b2, b3, Mi, sigma
+    );
+
+    for X1 in xs do
+        Append(~rawX, X1);
+    end for;
+end for;
+
+rawX := UniqueFSeq(rawX);
+printf "raw recovered X1 before forward filter (#%o)=%o\n", #rawX, rawX;
+
+algSols := [ F | ];
+
+for X1 in rawX do
+    yy1, yy2, gen :=
+        ForwardWithGeneric(X1, F!0, b0, b1, b2, b3, Lmati, M, sigma, eps);
+
+    if yy2 eq F!0 then
+        Append(~algSols, X1);
+    end if;
+end for;
+
+algSols := UniqueFSeq(algSols);
+
+complete := IsSubsetSeq(bruteGen, algSols);
+
+printf "algebraic sols after forward filter (#%o)=%o\n", #algSols, algSols;
+printf "completeness bruteGenericSols subset algSols: %o\n", complete;
+printf "total CPU time: %o sec\n", Cputime(t_all);
+
+assert complete;
+
+print "==== Done ====";
