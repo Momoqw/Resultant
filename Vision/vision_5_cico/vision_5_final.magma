@@ -1,0 +1,798 @@
+SetSeed(20260609);
+
+NR := 5;
+MAX_INSTANCE_TRIES := 200;
+
+// -----------------------------------------------------------------------------
+// Field: AES polynomial x^8 + x^4 + x^3 + x + 1
+// -----------------------------------------------------------------------------
+F2<X> := PolynomialRing(GF(2));
+F<t> := ext<GF(2) | X^8 + X^4 + X^3 + X + 1>;
+basis := [ F!1 ] cat [ t^i : i in [1..7] ];
+
+// -----------------------------------------------------------------------------
+// Basic maps
+// -----------------------------------------------------------------------------
+function InvElt(x)
+    if x eq Parent(x)!0 then
+        return Parent(x)!0;
+    end if;
+    return x^-1;
+end function;
+
+function B3map(x, b0, b1, b2, b3)
+    P := Parent(x);
+    return P!b0 + (P!b1)*x + (P!b2)*x^2 + (P!b3)*x^4;
+end function;
+
+function Btmap(x, b0, b1, b2, b3)
+    P := Parent(x);
+    return (P!b0)*x^4 + (P!b1)*x^3 + (P!b2)*x^2 + P!b3;
+end function;
+
+function SeqToF(seq)
+    return &+[ (F!seq[i])*basis[i] : i in [1..8] ];
+end function;
+
+function BuildLmat(b1, b2, b3)
+    rows := [ Eltseq(b1*basis[j] + b2*basis[j]^2 + b3*basis[j]^4) : j in [1..8] ];
+    return Matrix(GF(2), 8, 8, &cat rows);
+end function;
+
+function B3invElt(y, b0, Lmati)
+    v := Vector(GF(2), Eltseq(y + b0)) * Lmati;
+    return SeqToF(Eltseq(v));
+end function;
+
+function RandomNonzero()
+    repeat
+        x := Random(F);
+    until x ne F!0;
+    return x;
+end function;
+
+function RandomB3Data()
+    repeat
+        b0 := Random(F);
+        b1 := Random(F);
+        b2 := Random(F);
+        b3 := RandomNonzero();
+        Lmat := BuildLmat(b1, b2, b3);
+    until Rank(Lmat) eq 8;
+    return b0, b1, b2, b3, Lmat, Lmat^-1;
+end function;
+
+function RandomMix()
+    repeat
+        M := Matrix(F, 2, 2, [ RandomNonzero() : i in [1..4] ]);
+    until Determinant(M) ne F!0;
+    return M, M^-1;
+end function;
+
+function MixAdd(x, y, M, c)
+    return M[1,1]*x + M[1,2]*y + c[1],
+           M[2,1]*x + M[2,2]*y + c[2];
+end function;
+
+function ForwardWithGeneric(x, y, b0, b1, b2, b3, Lmati, M, sigma, eps)
+    gen := true;
+
+    for r in [1..NR] do
+        if r gt 1 and (x eq F!0 or y eq F!0) then
+            gen := false;
+        end if;
+
+        x := InvElt(x);
+        y := InvElt(y);
+
+        x := B3invElt(x, b0, Lmati);
+        y := B3invElt(y, b0, Lmati);
+
+        x, y := MixAdd(x, y, M, sigma[r]);
+
+        if x eq F!0 or y eq F!0 then
+            gen := false;
+        end if;
+
+        x := InvElt(x);
+        y := InvElt(y);
+
+        x := B3map(x, b0, b1, b2, b3);
+        y := B3map(y, b0, b1, b2, b3);
+
+        x, y := MixAdd(x, y, M, eps[r]);
+    end for;
+
+    return x, y, gen;
+end function;
+
+function BruteForceCICO(b0, b1, b2, b3, Lmati, M, sigma, eps)
+    sols := [ F | ];
+    genSols := [ F | ];
+
+    for X1 in F do
+        y1, y2, gen := ForwardWithGeneric(X1, F!0, b0, b1, b2, b3, Lmati, M, sigma, eps);
+        if y2 eq F!0 then
+            Append(~sols, X1);
+            if gen then
+                Append(~genSols, X1);
+            end if;
+        end if;
+    end for;
+
+    return sols, genSols;
+end function;
+
+// -----------------------------------------------------------------------------
+// Back-substitution from the retained central pair to the permutation input.
+//
+// Link 5 is odd, so (v3,u3) is the state immediately after the B^{-1} layer of
+// step 5, and the input of step 5 is (B(v3)^{-1}, B(u3)^{-1}).
+// Step 2r-1 is X |-> M*B^{-1}(X^{-1}) + AddC_{2r-1};
+// step 2r   is X |-> M*B(X^{-1})      + AddC_{2r}.
+// -----------------------------------------------------------------------------
+function InvStep(S, s, b0, b1, b2, b3, Lmati, Mi, AC)
+    p1 := Mi[1,1]*(S[1]+AC[s][1]) + Mi[1,2]*(S[2]+AC[s][2]);
+    p2 := Mi[2,1]*(S[1]+AC[s][1]) + Mi[2,2]*(S[2]+AC[s][2]);
+    if IsOdd(s) then
+        return [ InvElt(B3map(p1,b0,b1,b2,b3)), InvElt(B3map(p2,b0,b1,b2,b3)) ];
+    else
+        return [ InvElt(B3invElt(p1,b0,Lmati)), InvElt(B3invElt(p2,b0,Lmati)) ];
+    end if;
+end function;
+
+function StateFromCentralPair(vv3, uu3, b0, b1, b2, b3, Lmati, Mi, AC)
+    Xs := [ InvElt(vv3), InvElt(uu3) ];
+    for s in [5 .. 1 by -1] do
+        Xs := InvStep(Xs, s, b0, b1, b2, b3, Lmati, Mi, AC);
+    end for;
+    return Xs;
+end function;
+
+// -----------------------------------------------------------------------------
+// Functional normal form on GF(256): X^256 = X, so a positive exponent e is
+// reduced to 1 + ((e-1) mod 255).
+//
+// Accumulation is chunked.  Merging reduced terms one at a time into a growing
+// polynomial is quadratic in the number of terms, while "&+" over a chunk is
+// ordinary polynomial addition, which combines duplicate reduced monomials.
+// -----------------------------------------------------------------------------
+CHUNK := 100000;
+
+function ReduceExps(E)
+    return [ (E[k] eq 0) select 0 else ((E[k] - 1) mod 255) + 1 : k in [1..#E] ];
+end function;
+
+function ReduceField(f)
+    P := Parent(f);
+
+    if f eq P!0 then
+        return f;
+    end if;
+
+    need := false;
+    for k in [1..Rank(P)] do
+        if Degree(f, k) gt 255 then
+            need := true;
+            break;
+        end if;
+    end for;
+
+    if not need then
+        return f;
+    end if;
+
+    C, Mo := CoefficientsAndMonomials(f);
+    out := P!0;
+
+    for s in [1..#C by CHUNK] do
+        e := Min(s + CHUNK - 1, #C);
+        out +:= &+[ C[j] * Monomial(P, ReduceExps(Exponents(Mo[j])))
+                    : j in [s..e] ];
+    end for;
+
+    return out;
+end function;
+
+// Frobenius squaring: coefficient-wise squaring and exponent doubling, so no
+// polynomial convolution is performed.
+function FrobSquareRF(f)
+    P := Parent(f);
+
+    if f eq P!0 then
+        return f;
+    end if;
+
+    C, Mo := CoefficientsAndMonomials(f);
+    out := P!0;
+
+    for s in [1..#C by CHUNK] do
+        e := Min(s + CHUNK - 1, #C);
+        out +:= &+[ C[j]^2 * Monomial(P, ReduceExps([ 2*x : x in Exponents(Mo[j]) ]))
+                    : j in [s..e] ];
+    end for;
+
+    return out;
+end function;
+
+function FrobFourthRF(f)
+    return FrobSquareRF(FrobSquareRF(f));
+end function;
+
+function MulRF(a, b)
+    P := Parent(a);
+    if a eq P!0 or b eq P!0 then
+        return P!0;
+    end if;
+    return ReduceField(a*b);
+end function;
+
+// -----------------------------------------------------------------------------
+// Streaming, fraction-free quartic substitution.
+//
+// Every link polynomial used for substitution has the shape of Equation (9),
+//     rel = q*x^4 + beta2*q*x^2 + beta1*q*x + p,
+// so on the branch q != 0,
+//     x^4 = beta2*x^2 + beta1*x + p/q.
+//
+// Write x^e = N_e(x) / q^h(e) with deg_x N_e <= 3 and h(e) = floor(e/4).  The
+// recurrence x^e = beta2*x^(e-2) + beta1*x^(e-3) + (p/q)*x^(e-4) gives
+//     N_e = beta2*q^(h(e)-h(e-2))*N_(e-2)
+//         + beta1*q^(h(e)-h(e-3))*N_(e-3)
+//         + p*N_(e-4),
+// where the first two exponents are 0 or 1 and the third is identically 0
+// because h(e-4) = h(e) - 1.  Only four previous numerators are needed, so the
+// working set is O(1) in deg_x(f), and the accumulator is rescaled by a single
+// factor of q each time h increases, so no table of powers of q is stored.
+//
+// The returned polynomial is q^h(deg_x f) times the rationally reduced
+// polynomial, hence has the same zeros wherever q != 0.
+// -----------------------------------------------------------------------------
+function ReduceByQuarticRelationFF(f, rel, idx, beta1, beta2)
+    P := Parent(f);
+
+    if f eq P!0 then
+        return f;
+    end if;
+
+    maxe := Degree(f, idx);
+
+    if maxe lt 4 then
+        return ReduceField(f);
+    end if;
+
+    if Degree(rel, idx) ne 4 then
+        error "ReduceByQuarticRelationFF: relation is not quartic.";
+    end if;
+
+    q := Coefficient(rel, idx, 4);
+    p := Coefficient(rel, idx, 0);
+
+    if q eq P!0 then
+        error "ReduceByQuarticRelationFF: zero quartic coefficient.";
+    end if;
+    if Coefficient(rel, idx, 3) ne P!0 then
+        error "ReduceByQuarticRelationFF: unexpected x^3 coefficient.";
+    end if;
+    if Coefficient(rel, idx, 2) ne beta2*q then
+        error "ReduceByQuarticRelationFF: x^2 coefficient is not beta2*q.";
+    end if;
+    if Coefficient(rel, idx, 1) ne beta1*q then
+        error "ReduceByQuarticRelationFF: x coefficient is not beta1*q.";
+    end if;
+
+    cf := [ Coefficient(f, idx, e) : e in [0..maxe] ];
+
+    // N0,...,N3 represent x^0,...,x^3, all with denominator q^0.
+    N0 := [ P!1, P!0, P!0, P!0 ];
+    N1 := [ P!0, P!1, P!0, P!0 ];
+    N2 := [ P!0, P!0, P!1, P!0 ];
+    N3 := [ P!0, P!0, P!0, P!1 ];
+
+    // rem / q^hcur is the reduced contribution of all exponents seen so far.
+    rem := [ P!0, P!0, P!0, P!0 ];
+    hcur := 0;
+
+    for e in [0 .. Min(3, maxe)] do
+        a := cf[e+1];
+        if a ne P!0 then
+            Ne := (e eq 0) select N0 else
+                  (e eq 1) select N1 else
+                  (e eq 2) select N2 else N3;
+            for j in [1..4] do
+                if Ne[j] ne P!0 then
+                    rem[j] +:= MulRF(a, Ne[j]);
+                end if;
+            end for;
+        end if;
+    end for;
+
+    // At the top of the iteration for exponent e:
+    //   N0 = N_(e-4), N1 = N_(e-3), N2 = N_(e-2), N3 = N_(e-1).
+    for e in [4..maxe] do
+        he := e div 4;
+
+        if he gt hcur then
+            if he ne hcur + 1 then
+                error "ReduceByQuarticRelationFF: denominator exponent jumped.";
+            end if;
+            for j in [1..4] do
+                if rem[j] ne P!0 then
+                    rem[j] := MulRF(rem[j], q);
+                end if;
+            end for;
+            hcur := he;
+        end if;
+
+        dq2 := he - ((e-2) div 4);
+        dq3 := he - ((e-3) div 4);
+        dqp := he - ((e-4) div 4) - 1;
+
+        if dq2 lt 0 or dq2 gt 1 or dq3 lt 0 or dq3 gt 1 or dqp ne 0 then
+            error "ReduceByQuarticRelationFF: bad recurrence exponents.";
+        end if;
+
+        Ne := [ P!0, P!0, P!0, P!0 ];
+
+        for j in [1..4] do
+            z2 := N2[j];
+            if z2 ne P!0 then
+                if dq2 eq 1 then
+                    z2 := MulRF(z2, q);
+                end if;
+                z2 := beta2*z2;
+            end if;
+
+            z3 := N1[j];
+            if z3 ne P!0 then
+                if dq3 eq 1 then
+                    z3 := MulRF(z3, q);
+                end if;
+                z3 := beta1*z3;
+            end if;
+
+            zp := N0[j];
+            if zp ne P!0 then
+                zp := MulRF(zp, p);
+            end if;
+
+            Ne[j] := z2 + z3 + zp;
+        end for;
+
+        a := cf[e+1];
+        if a ne P!0 then
+            for j in [1..4] do
+                if Ne[j] ne P!0 then
+                    rem[j] +:= MulRF(a, Ne[j]);
+                end if;
+            end for;
+        end if;
+
+        N0 := N1;
+        N1 := N2;
+        N2 := N3;
+        N3 := Ne;
+    end for;
+
+    x := P.idx;
+    return ReduceField(rem[1] + rem[2]*x + rem[3]*x^2 + rem[4]*x^3);
+end function;
+
+// -----------------------------------------------------------------------------
+// Intermediate resultants.
+//
+// After substitution the variable being eliminated has degree at most 3, and
+// its link polynomial has degree 4, so every intermediate Sylvester matrix is
+// at most 7 x 7.  Appendix A.2 evaluates that determinant with 17 generic
+// coefficient-polynomial multiplications.
+// -----------------------------------------------------------------------------
+procedure CheckQuarticLinkShape(fx, idx, beta1, beta2)
+    P := Parent(fx);
+    q := Coefficient(fx, idx, 4);
+
+    if q eq P!0 then
+        error "Quartic link: degree-4 coefficient is zero.";
+    end if;
+    if Coefficient(fx, idx, 3) ne P!0 then
+        error "Quartic link: unexpected x^3 coefficient.";
+    end if;
+    if Coefficient(fx, idx, 2) ne beta2*q then
+        error "Quartic link: x^2 coefficient is not beta2*q.";
+    end if;
+    if Coefficient(fx, idx, 1) ne beta1*q then
+        error "Quartic link: x coefficient is not beta1*q.";
+    end if;
+end procedure;
+
+// Res_x(a1*x + a0, q*x^4 + beta2*q*x^2 + beta1*q*x + p)
+//   = q*a0^4 + beta2*q*a0^2*a1^2 + beta1*q*a0*a1^3 + p*a1^4.
+function ResLinearQuartic(Flin, fx, idx, beta1, beta2)
+    CheckQuarticLinkShape(fx, idx, beta1, beta2);
+
+    a0 := Coefficient(Flin, idx, 0);
+    a1 := Coefficient(Flin, idx, 1);
+    q  := Coefficient(fx,   idx, 4);
+    p  := Coefficient(fx,   idx, 0);
+
+    a0sq := FrobSquareRF(a0);
+    a1sq := FrobSquareRF(a1);
+
+    z0 := MulRF(q, FrobSquareRF(a0sq));
+    z1 := MulRF(q, MulRF(a0sq, a1sq));
+    z2 := MulRF(q, MulRF(a0, MulRF(a1sq, a1)));
+    z3 := MulRF(p, FrobSquareRF(a1sq));
+
+    return ReduceField(z0 + beta2*z1 + beta1*z2 + z3);
+end function;
+
+function ResQuarticCubic(fx, Fcur, idx, beta1, beta2)
+    d := Degree(Fcur, idx);
+
+    if d gt 3 then
+        error "ResQuarticCubic: degree in the eliminated variable exceeds 3.";
+    end if;
+
+    CheckQuarticLinkShape(fx, idx, beta1, beta2);
+
+    if d le 0 then
+        // Res(quartic, constant) = constant^4.
+        return FrobFourthRF(Coefficient(Fcur, idx, 0));
+    elif d eq 1 then
+        return ResLinearQuartic(Fcur, fx, idx, beta1, beta2);
+    elif d eq 2 then
+        printf "  NOTE: degree in variable %o dropped to 2; using the generic 6x6 resultant.\n", idx;
+        return ReduceField(Resultant(fx, Fcur, idx));
+    end if;
+
+    a0 := Coefficient(Fcur, idx, 0);
+    a1 := Coefficient(Fcur, idx, 1);
+    a2 := Coefficient(Fcur, idx, 2);
+    a3 := Coefficient(Fcur, idx, 3);
+    q  := Coefficient(fx,   idx, 4);
+    p  := Coefficient(fx,   idx, 0);
+
+    beta1sq := beta1^2;
+    beta2sq := beta2^2;
+
+    a2sq   := FrobSquareRF(a2);
+    a3sq   := FrobSquareRF(a3);
+    a1four := FrobFourthRF(a1);
+    a2four := FrobSquareRF(a2sq);
+    a3four := FrobSquareRF(a3sq);
+
+    L := ReduceField(a1 + beta2*a3);
+    K := ReduceField(a0 + beta1*a3);
+
+    s  := MulRF(a2, a3);
+    tq := MulRF(s, a3sq);
+
+    C0 := a3four;
+    C1 := ReduceField(a2four + beta2*FrobSquareRF(s) + beta1*tq);
+
+    u := MulRF(a2, L);
+    v := MulRF(K, a3);
+    w := MulRF(a3, L);
+
+    V := ReduceField(u + v + beta2*s + beta1*a3sq);
+    W := ReduceField(w + beta2*a3sq);
+    U := ReduceField(a2sq + w);
+
+    C2 := ReduceField(
+        a1four +
+        beta2*FrobSquareRF(V) +
+        beta2sq*FrobSquareRF(W) +
+        beta1*MulRF(V, U) +
+        beta1sq*MulRF(W, a3sq)
+    );
+
+    E := ReduceField(FrobSquareRF(K) + beta2*FrobSquareRF(L) + beta2sq*a2sq + beta1*u);
+    D := ReduceField(FrobSquareRF(L) + beta2*a2sq);
+
+    C3 := MulRF(
+        a0,
+        ReduceField(MulRF(K, E) + beta1*MulRF(L, D) + beta1sq*MulRF(a2sq, a2))
+    );
+
+    p2 := FrobSquareRF(p);
+    q2 := FrobSquareRF(q);
+
+    left  := ReduceField(MulRF(C0, p2) + MulRF(C2, q2));
+    right := ReduceField(MulRF(C1, p2) + MulRF(C3, q2));
+
+    return ReduceField(MulRF(p, left) + MulRF(q, right));
+end function;
+
+// -----------------------------------------------------------------------------
+// Reporting
+// -----------------------------------------------------------------------------
+procedure PrintDegs(label, f)
+    P := Parent(f);
+    printf "%o : tdeg=%o terms=%o degs=%o\n",
+           label, TotalDegree(f), #Monomials(f),
+           [ Degree(f,i) : i in [1..Rank(P)] ];
+end procedure;
+
+procedure PrintMem(label)
+    printf "        [mem] %o : current %o MiB, peak %o MiB\n",
+           label, GetMemoryUsage() div 2^20, GetMaximumMemoryUsage() div 2^20;
+end procedure;
+
+function UniqueFSeq(S)
+    U := [ F | ];
+    for x in S do
+        if not (x in U) then
+            Append(~U, x);
+        end if;
+    end for;
+    return U;
+end function;
+
+function IsSubsetSeq(A, B)
+    for x in A do
+        if not (x in B) then
+            return false;
+        end if;
+    end for;
+    return true;
+end function;
+
+// -----------------------------------------------------------------------------
+// The ten equations.
+// -----------------------------------------------------------------------------
+function BuildEquations(b0, b1, b2, b3, alpha, M, Mi, sigma, eps)
+    R<v1,u1,v2,u2,v3,u3,v4,u4,v5,u5> := PolynomialRing(F, 10);
+    K := FieldOfFractions(R);
+
+    // Input boundary at link 2, Eq. (8), multiplied by v1*u1.
+    cL := alpha + Mi[2,1]*sigma[1][1] + Mi[2,2]*sigma[1][2];
+    fl := cL*v1*u1 + Mi[2,1]*u1 + Mi[2,2]*v1;
+
+    // Input chain, Eq. (4), link 2 -> link 4.
+    P1 := (K!Mi[1,1])*(K!1/(K!v2) + K!(sigma[2][1])) +
+          (K!Mi[1,2])*(K!1/(K!u2) + K!(sigma[2][2]));
+    P2 := (K!Mi[2,1])*(K!1/(K!v2) + K!(sigma[2][1])) +
+          (K!Mi[2,2])*(K!1/(K!u2) + K!(sigma[2][2]));
+
+    rhs_v1 := (K!Mi[1,1])*(K!1/B3map(P1, b0, b1, b2, b3) + K!(eps[1][1])) +
+              (K!Mi[1,2])*(K!1/B3map(P2, b0, b1, b2, b3) + K!(eps[1][2]));
+    rhs_u1 := (K!Mi[2,1])*(K!1/B3map(P1, b0, b1, b2, b3) + K!(eps[1][1])) +
+              (K!Mi[2,2])*(K!1/B3map(P2, b0, b1, b2, b3) + K!(eps[1][2]));
+
+    fv1 := R!Numerator(B3map(K!v1, b0, b1, b2, b3) + rhs_v1);
+    fu1 := R!Numerator(B3map(K!u1, b0, b1, b2, b3) + rhs_u1);
+
+    // Input chain, Eq. (4), link 4 -> link 6.
+    Q1 := (K!Mi[1,1])*(K!1/(K!v3) + K!(sigma[3][1])) +
+          (K!Mi[1,2])*(K!1/(K!u3) + K!(sigma[3][2]));
+    Q2 := (K!Mi[2,1])*(K!1/(K!v3) + K!(sigma[3][1])) +
+          (K!Mi[2,2])*(K!1/(K!u3) + K!(sigma[3][2]));
+
+    rhs_v2 := (K!Mi[1,1])*(K!1/B3map(Q1, b0, b1, b2, b3) + K!(eps[2][1])) +
+              (K!Mi[1,2])*(K!1/B3map(Q2, b0, b1, b2, b3) + K!(eps[2][2]));
+    rhs_u2 := (K!Mi[2,1])*(K!1/B3map(Q1, b0, b1, b2, b3) + K!(eps[2][1])) +
+              (K!Mi[2,2])*(K!1/B3map(Q2, b0, b1, b2, b3) + K!(eps[2][2]));
+
+    fv2 := R!Numerator(B3map(K!v2, b0, b1, b2, b3) + rhs_v2);
+    fu2 := R!Numerator(B3map(K!u2, b0, b1, b2, b3) + rhs_u2);
+
+    // Central link, Eq. (5), link 6 -> link 7.
+    den_v4 := (K!M[1,1])*B3map(K!v3, b0, b1, b2, b3) +
+              (K!M[1,2])*B3map(K!u3, b0, b1, b2, b3) + K!(eps[3][1]);
+    den_u4 := (K!M[2,1])*B3map(K!v3, b0, b1, b2, b3) +
+              (K!M[2,2])*B3map(K!u3, b0, b1, b2, b3) + K!(eps[3][2]);
+
+    fv4 := R!Numerator(den_v4*B3map(K!v4, b0, b1, b2, b3) + K!1);
+    fu4 := R!Numerator(den_u4*B3map(K!u4, b0, b1, b2, b3) + K!1);
+
+    // Output chain, Eq. (3), link 7 -> link 9.
+    r1 := (K!M[1,1])*(K!v4) + (K!M[1,2])*(K!u4) + K!(sigma[4][1]);
+    r2 := (K!M[2,1])*(K!v4) + (K!M[2,2])*(K!u4) + K!(sigma[4][2]);
+
+    w1 := (K!M[1,1])*B3map(K!1/r1, b0, b1, b2, b3) +
+          (K!M[1,2])*B3map(K!1/r2, b0, b1, b2, b3) + K!(eps[4][1]);
+    w2 := (K!M[2,1])*B3map(K!1/r1, b0, b1, b2, b3) +
+          (K!M[2,2])*B3map(K!1/r2, b0, b1, b2, b3) + K!(eps[4][2]);
+
+    fv5 := R!Numerator(w1*B3map(K!v5, b0, b1, b2, b3) + K!1);
+    fu5 := R!Numerator(w2*B3map(K!u5, b0, b1, b2, b3) + K!1);
+
+    // Output boundary, Eq. (12), link 9.
+    t1 := (K!M[1,1])*(K!v5) + (K!M[1,2])*(K!u5) + K!(sigma[5][1]);
+    t2 := (K!M[2,1])*(K!v5) + (K!M[2,2])*(K!u5) + K!(sigma[5][2]);
+
+    fr := R!Numerator((K!M[2,1])*Btmap(t1, b0, b1, b2, b3)*t2^4 +
+                      (K!M[2,2])*Btmap(t2, b0, b1, b2, b3)*t1^4 +
+                      (K!(eps[5][2]))*t1^4*t2^4);
+
+    return R,
+           ReduceField(fl),
+           ReduceField(fv1), ReduceField(fu1),
+           ReduceField(fv2), ReduceField(fu2),
+           ReduceField(fv4), ReduceField(fu4),
+           ReduceField(fv5), ReduceField(fu5),
+           ReduceField(fr);
+end function;
+
+// -----------------------------------------------------------------------------
+// 1. Instance with a generic CICO-1 solution.
+// -----------------------------------------------------------------------------
+found := false;
+
+for trial in [1..MAX_INSTANCE_TRIES] do
+    b0, b1, b2, b3, Lmat, Lmati := RandomB3Data();
+    alpha := B3invElt(F!0, b0, Lmati);
+    M, Mi := RandomMix();
+    sigma := [ [ Random(F), Random(F) ] : i in [1..NR] ];
+    eps := [ [ Random(F), Random(F) ] : i in [1..NR] ];
+    bruteSols, bruteGen := BruteForceCICO(b0, b1, b2, b3, Lmati, M, sigma, eps);
+    if #bruteGen gt 0 then
+        found := true;
+        break;
+    end if;
+end for;
+
+if not found then
+    error "No suitable instance found. Increase MAX_INSTANCE_TRIES or change SetSeed.";
+end if;
+
+AC := [ [F|0,0] : j in [1..2*NR] ];
+for r in [1..NR] do
+    AC[2*r-1] := sigma[r];
+    AC[2*r] := eps[r];
+end for;
+
+beta1 := b1/b3;
+beta2 := b2/b3;
+
+print "==== Instance ====";
+printf "b0=%o b1=%o b2=%o b3=%o\n", b0, b1, b2, b3;
+printf "alpha=B^-1(0)=%o\n", alpha;
+print "M="; print M;
+printf "bruteSols (#%o)=%o\n", #bruteSols, bruteSols;
+printf "bruteGenericSols (#%o)=%o\n", #bruteGen, bruteGen;
+
+
+// -----------------------------------------------------------------------------
+// Recreate the same polynomial ring, then import FL and FR produced by the two
+// parallel processes.  WriteObject/ReadObject is used only for transport.
+// Coefficients are mapped by sending the source AES-field generator to t, so the
+// two independently created GF(2^8) parents are identified by the same defining
+// polynomial, not by an arbitrary finite-field isomorphism.
+// -----------------------------------------------------------------------------
+t_all := Cputime();
+
+R<v1,u1,v2,u2,v3,u3,v4,u4,v5,u5> := PolynomialRing(F, 10);
+
+instanceTag := Sprintf("%m|%m|%m|%m|%m|%m|%m",
+                       b0, b1, b2, b3, M, sigma, eps);
+
+leftIO := Open("vision5_FL.obj", "r");
+leftPayload := ReadObject(leftIO);
+delete leftIO;
+
+rightIO := Open("vision5_FR.obj", "r");
+rightPayload := ReadObject(rightIO);
+delete rightIO;
+
+if leftPayload[1] ne "VISION5_LEFT_V1" then
+    error "vision5_FL.obj has the wrong format/tag.";
+end if;
+if rightPayload[1] ne "VISION5_RIGHT_V1" then
+    error "vision5_FR.obj has the wrong format/tag.";
+end if;
+if leftPayload[2] ne instanceTag then
+    error "vision5_FL.obj was produced from a different Vision instance.";
+end if;
+if rightPayload[2] ne instanceTag then
+    error "vision5_FR.obj was produced from a different Vision instance.";
+end if;
+
+function ImportSameAESPolynomial(g, P, Ft)
+    if g eq Parent(g)!0 then
+        return P!0;
+    end if;
+
+    Fs := BaseRing(Parent(g));
+
+    // Both side programs construct GF(2^8) with
+    // X^8 + X^4 + X^3 + X + 1 and use its named generator.
+    phi := hom< Fs -> Ft | Ft.1 >;
+
+    C, Mo := CoefficientsAndMonomials(g);
+    out := P!0;
+
+    for s in [1..#C by CHUNK] do
+        e := Min(s + CHUNK - 1, #C);
+        out +:= &+[ phi(C[j]) * Monomial(P, Exponents(Mo[j]))
+                    : j in [s..e] ];
+    end for;
+
+    return out;
+end function;
+
+print "==== Import parallel side results ====";
+tt := Cputime();
+FL := ImportSameAESPolynomial(leftPayload[3], R, F);
+printf "import FL : %o sec\n", Cputime(tt);
+PrintDegs("FL = Gin", FL);
+
+tt := Cputime();
+FR := ImportSameAESPolynomial(rightPayload[3], R, F);
+printf "import FR : %o sec\n", Cputime(tt);
+PrintDegs("FR = Gout", FR);
+PrintMem("after importing FL/FR");
+
+delete leftPayload;
+delete rightPayload;
+// -----------------------------------------------------------------------------
+// 5. Final bivariate resultant at the central pair, then root finding.
+// -----------------------------------------------------------------------------
+print "==== Final resultant and root finding ====";
+
+printf "FL : deg_v3=%o deg_u3=%o    FR : deg_v3=%o deg_u3=%o\n",
+       Degree(FL,5), Degree(FL,6), Degree(FR,5), Degree(FR,6);
+printf "Sylvester size = %o, full resultant degree = %o\n",
+       Degree(FL,5) + Degree(FR,5),
+       Degree(FL,5)*Degree(FR,6) + Degree(FR,5)*Degree(FL,6);
+
+tt := Cputime();
+H := ReduceField(Resultant(FL, FR, 5));       // eliminate v3; H lives in u3
+printf "H = Res_v3(FL,FR) : %o sec\n", Cputime(tt);
+PrintDegs("H", H);  PrintMem("final resultant");
+
+if H eq R!0 then
+    print "WARNING: the final resultant vanishes identically.";
+    u3Roots := [ x : x in F ];
+else
+    u3Roots := [ uu : uu in F |
+                 Evaluate(H, [F!0,F!0,F!0,F!0,F!0,uu,F!0,F!0,F!0,F!0]) eq F!0 ];
+end if;
+printf "u3 roots of H (#%o)=%o\n", #u3Roots, u3Roots;
+
+pairCands := [ <F!0,F!0> : i in [1..0] ];
+
+for uu in u3Roots do
+    for vv in F do
+        vals := [ F!0, F!0, F!0, F!0, vv, uu, F!0, F!0, F!0, F!0 ];
+        if Evaluate(FL, vals) eq F!0 and Evaluate(FR, vals) eq F!0 then
+            Append(~pairCands, <vv, uu>);
+        end if;
+    end for;
+end for;
+
+printf "common zeros (v3,u3) (#%o)=%o\n", #pairCands, pairCands;
+
+// -----------------------------------------------------------------------------
+// 6. Back-substitution to the CICO input, and verification.
+// -----------------------------------------------------------------------------
+print "==== Verification ====";
+
+rawX := [ F | ];
+for pc in pairCands do
+    Xs := StateFromCentralPair(pc[1], pc[2], b0, b1, b2, b3, Lmati, Mi, AC);
+    if Xs[2] eq F!0 then
+        Append(~rawX, Xs[1]);
+    end if;
+end for;
+rawX := UniqueFSeq(rawX);
+printf "candidate inputs before the forward check (#%o)=%o\n", #rawX, rawX;
+
+algSols := [ F | ];
+for X1 in rawX do
+    yy1, yy2 := ForwardWithGeneric(X1, F!0, b0, b1, b2, b3, Lmati, M, sigma, eps);
+    if yy2 eq F!0 then
+        Append(~algSols, X1);
+    end if;
+end for;
+algSols := UniqueFSeq(algSols);
+
+printf "algebraic solutions (#%o)=%o\n", #algSols, algSols;
+printf "soundness    (algSols subset bruteSols)       : %o\n",
+       IsSubsetSeq(algSols, bruteSols);
+printf "completeness (bruteGenericSols subset algSols): %o\n",
+       IsSubsetSeq(bruteGen, algSols);
+
+printf "final-stage CPU time (import + big resultant + verification): %o sec\n", Cputime(t_all);
+PrintMem("final");
+
+print "==== Done ====";
