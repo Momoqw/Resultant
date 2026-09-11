@@ -1,0 +1,541 @@
+SetSeed(20260609);
+
+NR := 3;
+MAX_INSTANCE_TRIES := 200;
+REQUIRE_GENERIC_SOLUTION := true;
+DO_LEFT_REDUCE := true;
+DO_RIGHT_PREREDUCE_FR := true;
+DO_RIGHT_REDUCE_C := true;
+
+// -----------------------------------------------------------------------------
+// Field: AES polynomial x^8 + x^4 + x^3 + x + 1
+// -----------------------------------------------------------------------------
+F2<X> := PolynomialRing(GF(2));
+F<t> := ext<GF(2) | X^8 + X^4 + X^3 + X + 1>;
+basis := [ F!1 ] cat [ t^i : i in [1..7] ];
+
+// -----------------------------------------------------------------------------
+// Basic maps
+// -----------------------------------------------------------------------------
+function InvElt(x)
+    if x eq Parent(x)!0 then
+        return Parent(x)!0;
+    end if;
+    return x^-1;
+end function;
+
+function B3map(x, b0, b1, b2, b3)
+    P := Parent(x);
+    return P!b0 + (P!b1)*x + (P!b2)*x^2 + (P!b3)*x^4;
+end function;
+
+function Btmap(x, b0, b1, b2, b3)
+    P := Parent(x);
+    return (P!b0)*x^4 + (P!b1)*x^3 + (P!b2)*x^2 + P!b3;
+end function;
+
+function SeqToF(seq)
+    return &+[ (F!seq[i])*basis[i] : i in [1..8] ];
+end function;
+
+function BuildLmat(b1, b2, b3)
+    rows := [ Eltseq(b1*basis[j] + b2*basis[j]^2 + b3*basis[j]^4) : j in [1..8] ];
+    return Matrix(GF(2), 8, 8, &cat rows);
+end function;
+
+function B3invElt(y, b0, Lmati)
+    v := Vector(GF(2), Eltseq(y + b0)) * Lmati;
+    return SeqToF(Eltseq(v));
+end function;
+
+function RandomNonzero()
+    repeat
+        x := Random(F);
+    until x ne F!0;
+    return x;
+end function;
+
+function RandomB3Data()
+    repeat
+        b0 := Random(F);
+        b1 := Random(F);
+        b2 := Random(F);
+        b3 := RandomNonzero();
+        Lmat := BuildLmat(b1, b2, b3);
+    until Rank(Lmat) eq 8;
+    return b0, b1, b2, b3, Lmat, Lmat^-1;
+end function;
+
+function RandomMix()
+    repeat
+        M := Matrix(F, 2, 2, [ RandomNonzero() : i in [1..4] ]);
+    until Determinant(M) ne F!0;
+    return M, M^-1;
+end function;
+
+function MixAdd(x, y, M, c)
+    return M[1,1]*x + M[1,2]*y + c[1],
+           M[2,1]*x + M[2,2]*y + c[2];
+end function;
+
+function ForwardWithGeneric(x, y, b0, b1, b2, b3, Lmati, M, sigma, eps)
+    gen := true;
+
+    for r in [1..NR] do
+        // First inverse layer in the round.  For round 1, y=0 is the CICO
+        // boundary condition, so it is not counted as an internal denominator.
+        if r gt 1 and (x eq F!0 or y eq F!0) then
+            gen := false;
+        end if;
+
+        x := InvElt(x);
+        y := InvElt(y);
+
+        x := B3invElt(x, b0, Lmati);
+        y := B3invElt(y, b0, Lmati);
+
+        x, y := MixAdd(x, y, M, sigma[r]);
+
+        // Second inverse layer input in the round.
+        if x eq F!0 or y eq F!0 then
+            gen := false;
+        end if;
+
+        x := InvElt(x);
+        y := InvElt(y);
+
+        x := B3map(x, b0, b1, b2, b3);
+        y := B3map(y, b0, b1, b2, b3);
+
+        x, y := MixAdd(x, y, M, eps[r]);
+    end for;
+
+    return x, y, gen;
+end function;
+
+function Forward(x, y, b0, b1, b2, b3, Lmati, M, sigma, eps)
+    z1, z2, gen := ForwardWithGeneric(x, y, b0, b1, b2, b3, Lmati, M, sigma, eps);
+    return z1, z2;
+end function;
+
+function BruteForceCICO(b0, b1, b2, b3, Lmati, M, sigma, eps)
+    sols := [ F | ];
+    genSols := [ F | ];
+
+    for X1 in F do
+        y1, y2, gen := ForwardWithGeneric(X1, F!0, b0, b1, b2, b3, Lmati, M, sigma, eps);
+        if y2 eq F!0 then
+            Append(~sols, X1);
+            if gen then
+                Append(~genSols, X1);
+            end if;
+        end if;
+    end for;
+
+    return sols, genSols;
+end function;
+
+// -----------------------------------------------------------------------------
+// Polynomial utilities
+// -----------------------------------------------------------------------------
+function ReduceField(f)
+    P := Parent(f);
+    if f eq P!0 then
+        return f;
+    end if;
+
+    C, M := CoefficientsAndMonomials(f);
+    out := P!0;
+
+    for j in [1..#C] do
+        E := Exponents(M[j]);
+        NE := [ (E[k] eq 0) select 0 else ((E[k] - 1) mod 255) + 1 : k in [1..#E] ];
+        out +:= C[j] * Monomial(P, NE);
+    end for;
+
+    return out;
+end function;
+
+function ReduceByRelationNumerator(f, rel, idx)
+    // Precompute powers of variable idx modulo rel, then substitute monomial-wise.
+    // rel must have leading coefficient independent of variable idx.
+    P := Parent(f);
+    if f eq P!0 then
+        return f;
+    end if;
+
+    d := Degree(rel, idx);
+    maxe := Degree(f, idx);
+
+    if maxe lt d then
+        return ReduceField(f);
+    end if;
+
+    K := FieldOfFractions(P);
+    xi := K!(P.idx);
+
+    lc := K!Coefficient(rel, idx, d);
+    if lc eq K!0 then
+        error "ReduceByRelationNumerator: zero leading coefficient.";
+    end if;
+
+    lowc := [ K!Coefficient(rel, idx, k) : k in [0..d-1] ];
+
+    pow := [ K!0 : e in [0..maxe] ];
+    pow[1] := K!1;
+
+    for e in [1..Min(d-1, maxe)] do
+        pow[e+1] := xi^e;
+    end for;
+
+    for e in [d..maxe] do
+        acc := K!0;
+        for k in [0..d-1] do
+            if lowc[k+1] ne K!0 then
+                acc +:= lowc[k+1] * pow[e-d+k+1];
+            end if;
+        end for;
+        pow[e+1] := acc / lc;
+    end for;
+
+    C, M := CoefficientsAndMonomials(f);
+    out := K!0;
+
+    for j in [1..#C] do
+        E := Exponents(M[j]);
+        term := K!C[j];
+
+        for h in [1..#E] do
+            if h ne idx and E[h] ne 0 then
+                term *:= (K!(P.h))^E[h];
+            end if;
+        end for;
+
+        out +:= term * pow[E[idx]+1];
+    end for;
+
+    return ReduceField(P!Numerator(out));
+end function;
+
+function ResVar(f, g, idx)
+    return ReduceField(Resultant(f, g, idx));
+end function;
+
+procedure PrintDegs(label, f)
+    P := Parent(f);
+    print label;
+    printf "  total_degree=%o, terms=%o\n", TotalDegree(f), #Monomials(f);
+    for i in [1..Rank(P)] do
+        printf "  deg[%o]=%o\n", i, Degree(f, i);
+    end for;
+end procedure;
+
+function UniqueFSeq(S)
+    U := [ F | ];
+    for x in S do
+        if not (x in U) then
+            Append(~U, x);
+        end if;
+    end for;
+    return U;
+end function;
+
+function UniquePairSeq(S)
+    U := [ <F!0,F!0> : i in [1..0] ];
+    for p in S do
+        seen := false;
+        for q in U do
+            if p[1] eq q[1] and p[2] eq q[2] then
+                seen := true;
+                break;
+            end if;
+        end for;
+        if not seen then
+            Append(~U, p);
+        end if;
+    end for;
+    return U;
+end function;
+
+function IsSubsetSeq(A, B)
+    for x in A do
+        if not (x in B) then
+            return false;
+        end if;
+    end for;
+    return true;
+end function;
+
+// -----------------------------------------------------------------------------
+// Build the six equations.
+// Variable order:
+//   1=v1, 2=u1, 3=v2, 4=u2, 5=v3, 6=u3
+// -----------------------------------------------------------------------------
+function BuildEquations(b0, b1, b2, b3, alpha, M, Mi, sigma, eps)
+    R<v1,u1,v2,u2,v3,u3> := PolynomialRing(F, 6);
+    K := FieldOfFractions(R);
+
+    cL := alpha + Mi[2,1]*sigma[1][1] + Mi[2,2]*sigma[1][2];
+    fl := cL*v1*u1 + Mi[2,1]*u1 + Mi[2,2]*v1;
+
+    P1 := (K!Mi[1,1])*(K!1/(K!v2) + K!(sigma[2][1])) +
+          (K!Mi[1,2])*(K!1/(K!u2) + K!(sigma[2][2]));
+    P2 := (K!Mi[2,1])*(K!1/(K!v2) + K!(sigma[2][1])) +
+          (K!Mi[2,2])*(K!1/(K!u2) + K!(sigma[2][2]));
+
+    rhs_v1 := (K!Mi[1,1])*(K!1/B3map(P1, b0, b1, b2, b3) + K!(eps[1][1])) +
+              (K!Mi[1,2])*(K!1/B3map(P2, b0, b1, b2, b3) + K!(eps[1][2]));
+    rhs_u1 := (K!Mi[2,1])*(K!1/B3map(P1, b0, b1, b2, b3) + K!(eps[1][1])) +
+              (K!Mi[2,2])*(K!1/B3map(P2, b0, b1, b2, b3) + K!(eps[1][2]));
+
+    fv1 := R!Numerator(B3map(K!v1, b0, b1, b2, b3) + rhs_v1);
+    fu1 := R!Numerator(B3map(K!u1, b0, b1, b2, b3) + rhs_u1);
+
+    Lv := (K!M[1,1])*B3map(K!v2, b0, b1, b2, b3) +
+          (K!M[1,2])*B3map(K!u2, b0, b1, b2, b3) + K!(eps[2][1]);
+    Lu := (K!M[2,1])*B3map(K!v2, b0, b1, b2, b3) +
+          (K!M[2,2])*B3map(K!u2, b0, b1, b2, b3) + K!(eps[2][2]);
+
+    fv2 := R!Numerator(Lv*B3map(K!v3, b0, b1, b2, b3) + K!1);
+    fu2 := R!Numerator(Lu*B3map(K!u3, b0, b1, b2, b3) + K!1);
+
+    t1 := (K!M[1,1])*(K!v3) + (K!M[1,2])*(K!u3) + K!(sigma[3][1]);
+    t2 := (K!M[2,1])*(K!v3) + (K!M[2,2])*(K!u3) + K!(sigma[3][2]);
+
+    fr := R!Numerator((K!M[2,1])*Btmap(t1, b0, b1, b2, b3)*t2^4 +
+                      (K!M[2,2])*Btmap(t2, b0, b1, b2, b3)*t1^4 +
+                      (K!(eps[3][2]))*t1^4*t2^4);
+
+    return R,
+           ReduceField(fl), ReduceField(fv1), ReduceField(fu1),
+           ReduceField(fv2), ReduceField(fu2), ReduceField(fr);
+end function;
+
+function RecoverXFromPair(vv, uu, fl, fv1, fu1, alpha, b0, b1, b2, b3, Mi, sigma)
+    xs := [ F | ];
+
+    // The mixed equations use 1/v2 and 1/u2 on the left side.
+    if vv eq F!0 or uu eq F!0 then
+        return xs;
+    end if;
+
+    for a in F do
+        if a eq F!0 then
+            continue;
+        end if;
+
+        for b in F do
+            if b eq F!0 then
+                continue;
+            end if;
+
+            vals := [ a, b, vv, uu, F!0, F!0 ];
+
+            if Evaluate(fl, vals) eq F!0 and
+               Evaluate(fv1, vals) eq F!0 and
+               Evaluate(fu1, vals) eq F!0 then
+
+                w11 := Mi[1,1]*(a^-1 + sigma[1][1]) + Mi[1,2]*(b^-1 + sigma[1][2]);
+                w12 := Mi[2,1]*(a^-1 + sigma[1][1]) + Mi[2,2]*(b^-1 + sigma[1][2]);
+
+                if w12 eq alpha then
+                    X1 := InvElt(B3map(w11, b0, b1, b2, b3));
+                    Append(~xs, X1);
+                end if;
+            end if;
+        end for;
+    end for;
+
+    return UniqueFSeq(xs);
+end function;
+
+// -----------------------------------------------------------------------------
+// 1. Generate an instance with a generic CICO-1 solution.
+// -----------------------------------------------------------------------------
+found := false;
+
+for trial in [1..MAX_INSTANCE_TRIES] do
+    b0, b1, b2, b3, Lmat, Lmati := RandomB3Data();
+    alpha := B3invElt(F!0, b0, Lmati);
+
+    M, Mi := RandomMix();
+
+    sigma := [ [ Random(F), Random(F) ] : i in [1..NR] ];
+    eps := [ [ Random(F), Random(F) ] : i in [1..NR] ];
+
+    bruteSols, bruteGen := BruteForceCICO(b0, b1, b2, b3, Lmati, M, sigma, eps);
+
+    if REQUIRE_GENERIC_SOLUTION then
+        found := (#bruteGen gt 0);
+    else
+        found := (#bruteSols gt 0);
+    end if;
+
+    if found then
+        break;
+    end if;
+end for;
+
+if not found then
+    error "No suitable instance found. Increase MAX_INSTANCE_TRIES or change SetSeed.";
+end if;
+
+print "==== Instance ====";
+printf "b0=%o\nb1=%o\nb2=%o\nb3=%o\n", b0, b1, b2, b3;
+printf "alpha=B3inv(0)=%o\n", alpha;
+print "M="; print M;
+print "Mi="; print Mi;
+print "sigma="; print sigma;
+print "eps="; print eps;
+printf "bruteSols (#%o)=%o\n", #bruteSols, bruteSols;
+printf "bruteGenericSols (#%o)=%o\n", #bruteGen, bruteGen;
+
+// -----------------------------------------------------------------------------
+// 2. Build equations.
+// -----------------------------------------------------------------------------
+t_all := Cputime();
+
+R, fl, fv1, fu1, fv2, fu2, fr := BuildEquations(b0, b1, b2, b3, alpha, M, Mi, sigma, eps);
+
+print "==== Initial equations ====";
+PrintDegs("fl", fl);
+PrintDegs("fv1", fv1);
+PrintDegs("fu1", fu1);
+PrintDegs("fv2", fv2);
+PrintDegs("fu2", fu2);
+PrintDegs("fr", fr);
+
+// -----------------------------------------------------------------------------
+// 3. Left leg: Res_u1, optional reduction, Res_v1.
+// -----------------------------------------------------------------------------
+print "==== Left leg ====";
+
+PrintDegs("Before A=Res_u1(fl,fu1): fl", fl);
+PrintDegs("Before A=Res_u1(fl,fu1): fu1", fu1);
+tt := Cputime();
+A := ResVar(fl, fu1, 2);
+printf "A=Res_u1 done in %o sec\n", Cputime(tt);
+PrintDegs("A after ReduceField", A);
+
+if DO_LEFT_REDUCE then
+    PrintDegs("Before A mod fv1 in var v1", A);
+    tt := Cputime();
+    A := ReduceByRelationNumerator(A, fv1, 1);
+    printf "A reduction by fv1 done in %o sec\n", Cputime(tt);
+    PrintDegs("A after reduction by fv1", A);
+end if;
+
+PrintDegs("Before FL=Res_v1(A,fv1): A", A);
+PrintDegs("Before FL=Res_v1(A,fv1): fv1", fv1);
+tt := Cputime();
+FL := ResVar(A, fv1, 1);
+printf "FL=Res_v1 done in %o sec\n", Cputime(tt);
+PrintDegs("FL", FL);
+
+// -----------------------------------------------------------------------------
+// 4. Right leg: reduce fr early, Res_v3, reduce C, Res_u3.
+// -----------------------------------------------------------------------------
+print "==== Right leg ====";
+
+frw := fr;
+
+if DO_RIGHT_PREREDUCE_FR then
+    PrintDegs("Before fr mod fv2 in var v3", frw);
+    tt := Cputime();
+    frw := ReduceByRelationNumerator(frw, fv2, 5);
+    printf "fr reduction by fv2 done in %o sec\n", Cputime(tt);
+    PrintDegs("fr after reduction by fv2", frw);
+
+    PrintDegs("Before fr mod fu2 in var u3", frw);
+    tt := Cputime();
+    frw := ReduceByRelationNumerator(frw, fu2, 6);
+    printf "fr reduction by fu2 done in %o sec\n", Cputime(tt);
+    PrintDegs("fr after reduction by fu2", frw);
+end if;
+
+PrintDegs("Before C=Res_v3(frw,fv2): frw", frw);
+PrintDegs("Before C=Res_v3(frw,fv2): fv2", fv2);
+tt := Cputime();
+C := ResVar(frw, fv2, 5);
+printf "C=Res_v3 done in %o sec\n", Cputime(tt);
+PrintDegs("C after ReduceField", C);
+
+if DO_RIGHT_REDUCE_C then
+    PrintDegs("Before C mod fu2 in var u3", C);
+    tt := Cputime();
+    C := ReduceByRelationNumerator(C, fu2, 6);
+    printf "C reduction by fu2 done in %o sec\n", Cputime(tt);
+    PrintDegs("C after reduction by fu2", C);
+end if;
+
+PrintDegs("Before FR=Res_u3(C,fu2): C", C);
+PrintDegs("Before FR=Res_u3(C,fu2): fu2", fu2);
+tt := Cputime();
+FR := ResVar(C, fu2, 6);
+printf "FR=Res_u3 done in %o sec\n", Cputime(tt);
+PrintDegs("FR", FR);
+
+// -----------------------------------------------------------------------------
+// 5. Merge FL and FR by a final resultant and solve over GF(2^8).
+// -----------------------------------------------------------------------------
+print "==== Merge and solve ====";
+
+PrintDegs("Before H=Res_v2(FL,FR): FL", FL);
+PrintDegs("Before H=Res_v2(FL,FR): FR", FR);
+tt := Cputime();
+H := ResVar(FL, FR, 3);
+printf "H=Res_v2(FL,FR) done in %o sec\n", Cputime(tt);
+PrintDegs("H", H);
+
+if H eq R!0 then
+    print "WARNING: final resultant is zero; falling back to scanning all u2 values.";
+    u2Roots := [ x : x in F ];
+else
+    u2Roots := [ uu : uu in F | Evaluate(H, [F!0, F!0, F!0, uu, F!0, F!0]) eq F!0 ];
+end if;
+
+printf "u2 roots from H (#%o)=%o\n", #u2Roots, u2Roots;
+
+pairCands := [ <F!0,F!0> : i in [1..0] ];
+
+for uu in u2Roots do
+    for vv in F do
+        vals := [ F!0, F!0, vv, uu, F!0, F!0 ];
+        if Evaluate(FL, vals) eq F!0 and Evaluate(FR, vals) eq F!0 then
+            Append(~pairCands, <vv, uu>);
+        end if;
+    end for;
+end for;
+
+pairCands := UniquePairSeq(pairCands);
+printf "meeting pairs (v2,u2) (#%o)=%o\n", #pairCands, pairCands;
+
+rawX := [ F | ];
+
+for p in pairCands do
+    xs := RecoverXFromPair(p[1], p[2], fl, fv1, fu1, alpha, b0, b1, b2, b3, Mi, sigma);
+    for X1 in xs do
+        Append(~rawX, X1);
+    end for;
+end for;
+
+rawX := UniqueFSeq(rawX);
+printf "raw recovered X1 before forward filter (#%o)=%o\n", #rawX, rawX;
+
+algSols := [ F | ];
+
+for X1 in rawX do
+    yy1, yy2, gen := ForwardWithGeneric(X1, F!0, b0, b1, b2, b3, Lmati, M, sigma, eps);
+    if yy2 eq F!0 then
+        Append(~algSols, X1);
+    end if;
+end for;
+
+algSols := UniqueFSeq(algSols);
+
+printf "algebraic sols after forward filter (#%o)=%o\n", #algSols, algSols;
+printf "soundness algSols subset bruteSols: %o\n", IsSubsetSeq(algSols, bruteSols);
+printf "completeness bruteGenericSols subset algSols: %o\n", IsSubsetSeq(bruteGen, algSols);
+printf "total CPU time: %o sec\n", Cputime(t_all);
+
+print "==== Done ====";
