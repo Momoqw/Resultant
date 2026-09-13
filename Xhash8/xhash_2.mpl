@@ -187,14 +187,6 @@ end proc:
 
 # ----------------------------------------------------------------------
 # Fiber and triangular reduction.
-#
-# FiberReduce computes the normal form modulo
-#   x1^D-c1, x2^D-c2.
-#
-# ReduceAll additionally reduces the triangular relations
-#   z_j^3 = A_j
-# in reverse introduction order.  Since A_j only contains older
-# auxiliary variables, one reverse pass is sufficient.
 # ----------------------------------------------------------------------
 FiberReduce := proc(e, c1, c2)
     local res:
@@ -237,7 +229,7 @@ ReduceState := proc(state, eq_list, c1, c2)
 end proc:
 
 # ----------------------------------------------------------------------
-# Reduced arithmetic: reduce after every nontrivial polynomial product.
+# Reduced arithmetic.
 # ----------------------------------------------------------------------
 MulRed := proc(u, v, eq_list, c1, c2)
     return ReduceAll(FpRed(u * v), eq_list, c1, c2)
@@ -331,15 +323,6 @@ end proc:
 
 # ----------------------------------------------------------------------
 # Cubic norm for auxiliary elimination.
-#
-# If f=a0+a1*z+a2*z^2 and z^3=A, then, up to the chosen resultant
-# orientation,
-#
-#   Res_z(f, A-z^3)
-#     = a0^3 + A*a1^3 + A^2*a2^3 - 3*A*a0*a1*a2.
-#
-# Every coefficient product is reduced by the older triangular relations
-# and by the two fiber relations.
 # ----------------------------------------------------------------------
 CubicNormRed := proc(f, A, z, prev_eqs, c1, c2)
     local ff, AA, dz, a0, a1, a2, t0, t1, t2, t3:
@@ -592,9 +575,7 @@ AnalyzeFiber := proc(c1, c2)
 
     totalInputTime := time() - t0:
 
-    # Strong small-scale correctness check: after final verification,
-    # the algebraic procedure must recover exactly the brute-force
-    # solutions in the fixed fiber.
+    # Check recovery against brute force on the fixed fiber.
     if not SamePairSets(verified, trueSols) then
         error "recovery mismatch on fiber (%1,%2)", c1, c2
     end if:
@@ -605,7 +586,7 @@ AnalyzeFiber := proc(c1, c2)
 end proc:
 
 # ======================================================================
-# Deterministic fiber sample
+# Fiber sample
 # ======================================================================
 CDset := {}:
 
@@ -631,7 +612,7 @@ if NUM_FIBERS > nops(AllFibers) then
     error "NUM_FIBERS is too large"
 end if:
 
-# Deterministic full-cycle indexing because gcd(73,196)=1.
+# Full-cycle indexing; gcd(73,196)=1.
 FiberPairs := [
     seq(AllFibers[1 + irem(73*(i - 1) + 41, nops(AllFibers))],
         i = 1 .. NUM_FIBERS)
