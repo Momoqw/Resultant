@@ -264,9 +264,7 @@ t_build := time():
 for r to R do
     printf("=== round %d ===\n", r):
 
-    # F step:
-    # Use SAlphaVecRed instead of SAlphaVec so that each cubic power
-    # is reduced immediately by previously generated equations.
+    # F step with immediate reduction.
     state := AffineBefore(state, C[3*r - 3]):
     state := SAlphaVecRed(state, eq_list):
     state := ReduceState(state, eq_list):
@@ -295,8 +293,7 @@ for r to R do
         state_after_B := subsop(idx = yvar, state_after_B):
     end do:
 
-    # P3 step:
-    # Use Pi2Red instead of Pi2 so that products are reduced immediately.
+    # P3 step with immediate reduction.
     state := AddC(state_after_B, C[3*r - 1]):
     state := Pi2Red(state, eq_list):
     state := ReduceState(state, eq_list):
@@ -334,17 +331,7 @@ printf("(p = %d, alpha = %d, R = %d, build time %.2f s)\n",
        p, alpha, R, time() - t_build):
 
 # ============================================================
-#  Back-to-front elimination
-#  MEMORY-SAFE version for equations of the form:
-#
-#      fx_i = A_i - x_i^3
-#
-#  If f = a0 + a1*y + a2*y^2 and y^3 = A, then
-#
-#      Resultant_y(f, A - y^3)
-#        = a0^3 + A*a1^3 + A^2*a2^3 - 3*A*a0*a1*a2
-#
-#  This avoids building SylvesterMatrix and avoids Det(tt).
+#  Back-to-front elimination by the cubic norm.
 # ============================================================
 
 PrefixEqs := proc(L, n)
@@ -358,7 +345,7 @@ end proc:
 CubicNormRed := proc(f, A, y, prev_eqs)
     local ff, AA, dy, a0, a1, a2, t0, t1, t2, t3, res:
 
-    # First reduce all older variables so degree in each older x_j stays < 3.
+    # Reduce with the preceding relations.
     ff := ReduceOne(f, prev_eqs):
     ff := collect(ff, y):
 
@@ -406,8 +393,7 @@ for i from upperbound(I1) by -1 to 1 do
     printf("\n--- eliminating x%d ---\n", i):
     t_step := time():
 
-    # Only older equations x1,...,x_{i-1} may appear in the coefficients.
-    # We reduce with them during the norm computation.
+    # Reduce coefficients with preceding relations.
     prev_eqs := PrefixEqs(eq_list, i - 1):
 
     # G1[i] has the form x_i^3 = A_i.
