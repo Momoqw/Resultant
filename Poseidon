@@ -58,7 +58,7 @@ def spow(a, e):
 
 
 # ----------------------------------------------------------------------
-# Toy Poseidon2b instance
+# Poseidon2b instance
 # ----------------------------------------------------------------------
 
 t = 6
@@ -228,7 +228,7 @@ def poly_eval(p, x):
 
 
 # ----------------------------------------------------------------------
-# Exact resultant evaluation
+# Resultant evaluation
 # ----------------------------------------------------------------------
 
 def _degree_rows(C):
@@ -399,7 +399,7 @@ def cico2_attack(m):
         if poly_eval(G, x1) == 0
     ]
 
-    # Back-substitution on the toy fiber.
+    # Back-substitution on the selected fiber.
     #
     # Record the size of each recovery frontier.  These statistics make
     # explicit how many candidates survive successive resultant elimination
