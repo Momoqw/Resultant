@@ -124,12 +124,7 @@ function BruteForceCICO(b0, b1, b2, b3, Lmati, M, sigma, eps)
 end function;
 
 // -----------------------------------------------------------------------------
-// Back-substitution from the retained central pair to the permutation input.
-//
-// Link 5 is odd, so (v3,u3) is the state immediately after the B^{-1} layer of
-// step 5, and the input of step 5 is (B(v3)^{-1}, B(u3)^{-1}).
-// Step 2r-1 is X |-> M*B^{-1}(X^{-1}) + AddC_{2r-1};
-// step 2r   is X |-> M*B(X^{-1})      + AddC_{2r}.
+// Back-substitution from the retained central pair.
 // -----------------------------------------------------------------------------
 function InvStep(S, s, b0, b1, b2, b3, Lmati, Mi, AC)
     p1 := Mi[1,1]*(S[1]+AC[s][1]) + Mi[1,2]*(S[2]+AC[s][2]);
@@ -228,25 +223,7 @@ function MulRF(a, b)
 end function;
 
 // -----------------------------------------------------------------------------
-// Streaming, fraction-free quartic substitution.
-//
-// Every link polynomial used for substitution has the shape of Equation (9),
-//     rel = q*x^4 + beta2*q*x^2 + beta1*q*x + p,
-// so on the branch q != 0,
-//     x^4 = beta2*x^2 + beta1*x + p/q.
-//
-// Write x^e = N_e(x) / q^h(e) with deg_x N_e <= 3 and h(e) = floor(e/4).  The
-// recurrence x^e = beta2*x^(e-2) + beta1*x^(e-3) + (p/q)*x^(e-4) gives
-//     N_e = beta2*q^(h(e)-h(e-2))*N_(e-2)
-//         + beta1*q^(h(e)-h(e-3))*N_(e-3)
-//         + p*N_(e-4),
-// where the first two exponents are 0 or 1 and the third is identically 0
-// because h(e-4) = h(e) - 1.  Only four previous numerators are needed, so the
-// working set is O(1) in deg_x(f), and the accumulator is rescaled by a single
-// factor of q each time h increases, so no table of powers of q is stored.
-//
-// The returned polynomial is q^h(deg_x f) times the rationally reduced
-// polynomial, hence has the same zeros wherever q != 0.
+// Fraction-free quartic reduction.
 // -----------------------------------------------------------------------------
 function ReduceByQuarticRelationFF(f, rel, idx, beta1, beta2)
     P := Parent(f);
@@ -380,11 +357,6 @@ end function;
 
 // -----------------------------------------------------------------------------
 // Intermediate resultants.
-//
-// After substitution the variable being eliminated has degree at most 3, and
-// its link polynomial has degree 4, so every intermediate Sylvester matrix is
-// at most 7 x 7.  Appendix A.2 evaluates that determinant with 17 generic
-// coefficient-polynomial multiplications.
 // -----------------------------------------------------------------------------
 procedure CheckQuarticLinkShape(fx, idx, beta1, beta2)
     P := Parent(fx);
