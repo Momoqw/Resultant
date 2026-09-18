@@ -10,7 +10,7 @@ with(LinearAlgebra):
 alpha := 3:
 alphaInv := 159:                    # 3*159 = 1 mod 238
 p := 239:
-DFiber := 17:                         # do not use name D: Maple protects D as differentiation
+DFiber := 17:                         # Fiber degree; D is a protected differentiation operator in Maple.
 R := 3:
 
 InvBranches := [0, 2]:
@@ -150,8 +150,7 @@ Pi2 := proc(v)
 end proc:
 
 # ----------------------------------------------------------------------
-# Numeric permutation, used only for brute-force ground truth and final
-# verification.
+# Direct permutation evaluation for exhaustive comparison and final verification.
 # ----------------------------------------------------------------------
 ApplyInvBranches := proc(v)
     local w, br, idx:
@@ -451,10 +450,9 @@ end proc:
 # ----------------------------------------------------------------------
 # Quotient representative of Res_{x2}(h, x2^D-c2).
 #
-# Since x2^D-c2 splits over F_p on a valid fiber, its roots are roots2.
-# Up to a nonzero sign, the resultant is the product of h(x1,b) over
-# b in roots2.  We reduce x1^D=c1 after every multiplication, exactly
-# as required by the fiber method.
+# The roots of x2^D-c2 on a valid fiber are roots2.
+# Up to a nonzero sign, the resultant is the product of h(x1,b)
+# over b in roots2. Reduce modulo x1^D-c1 after each multiplication.
 # ----------------------------------------------------------------------
 FiberResultantX2 := proc(h, roots2, c1, c2)
     local res, b, term:
@@ -519,7 +517,7 @@ AnalyzeFiber := proc(c1, c2)
         error "invalid fiber: expected exactly D roots"
     end if:
 
-    # Brute-force ground truth inside this fiber (only D^2 points).
+    # Enumerate the D^2 inputs in the fixed fiber for an independent comparison.
     trueSols := []:
 
     for a in roots1 do
