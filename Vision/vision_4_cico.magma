@@ -124,7 +124,7 @@ function BruteForceCICO(b0, b1, b2, b3, Lmati, M, sigma, eps)
 end function;
 
 // -----------------------------------------------------------------------------
-// Back-substitution from the retained central pair to the permutation input.
+// Back-substitution from the middle state to the permutation input.
 //
 // Link 5 is odd, so (v3,u3) is the state immediately after the B^{-1} layer of
 // step 5, and the input of step 5 is (B(v3)^{-1}, B(u3)^{-1}).
@@ -540,7 +540,7 @@ function BuildEquations(b0, b1, b2, b3, alpha, M, Mi, sigma, eps)
 
     // Central link, Eq. (7) for even N, link 4 -> link 5.  AddC_4 = eps[2].
     // Oriented so that v2,u2 are the quartic variables and the coefficients
-    // involve only the retained central pair, which is what allows v2,u2 to be
+    // involve only the middle state, which is what allows v2,u2 to be
     // reduced toward it.
     rhs_v2 := (K!Mi[1,1])*(K!1/B3map(K!v3, b0, b1, b2, b3) + K!(eps[2][1])) +
               (K!Mi[1,2])*(K!1/B3map(K!u3, b0, b1, b2, b3) + K!(eps[2][2]));
@@ -636,7 +636,7 @@ PrintMem("after equation construction");
 // 3. Input side: eliminate u1, v1, u2, v2.
 //    fl is linear in u1, so the first resultant needs no substitution.  After
 //    each resultant the substitution continues through the remaining link pairs
-//    until the retained central pair is reached.
+//    until the middle state is reached.
 // -----------------------------------------------------------------------------
 print "==== Input side ====";
 
@@ -715,7 +715,7 @@ PrintDegs("FR = Gout", FR);  PrintMem("output side done");
 C := R!0;
 
 // -----------------------------------------------------------------------------
-// 5. Final bivariate resultant at the central pair, then root finding.
+// 5. Final bivariate resultant at the middle state, then root finding.
 // -----------------------------------------------------------------------------
 print "==== Final resultant and root finding ====";
 
