@@ -21,7 +21,7 @@ if igcd(alpha, p - 1) <> 1 then
 end if:
 
 # ------------------------------------------------------------
-#  Modular polynomial expand + balanced-form helper
+#  Polynomial expansion over F_p and balanced coefficient display.
 # ------------------------------------------------------------
 FpRed := proc(e)
     return Expand(e) mod p
@@ -51,7 +51,7 @@ for k from 0 to 9 do
 end do:
 
 # ------------------------------------------------------------
-#  Vector ops
+#  Vector operations.
 # ------------------------------------------------------------
 AddC := proc(v, cvec)
     local i:
@@ -89,7 +89,7 @@ NumMon := proc(e)
 end proc:
 
 # ------------------------------------------------------------
-#  Rewrite trick: y^alpha -> input via algsubs
+#  Auxiliary-variable reduction using y^alpha = input.
 # ------------------------------------------------------------
 ReduceOne := proc(e, eq_list)
     local res, prev, j, yvar, input:
@@ -331,7 +331,9 @@ printf("(p = %d, alpha = %d, R = %d, build time %.2f s)\n",
        p, alpha, R, time() - t_build):
 
 # ============================================================
-#  Back-to-front elimination by the cubic norm.
+#  Eliminate auxiliary variables in reverse order using the cubic norm.
+#  For f = a0 + a1*y + a2*y^2,
+#  Res_y(f, A-y^3) = a0^3 + A*a1^3 + A^2*a2^3 - 3*A*a0*a1*a2.
 # ============================================================
 
 PrefixEqs := proc(L, n)
