@@ -406,7 +406,7 @@ PrintDegs("fu2", fu2);
 PrintDegs("fr", fr);
 
 // -----------------------------------------------------------------------------
-// 3. Left leg: Res_u1, optional reduction, Res_v1.
+// 3. Forward elimination: Res_u1, optional quartic reduction, then Res_v1.
 // -----------------------------------------------------------------------------
 print "==== Left leg ====";
 
@@ -433,7 +433,7 @@ printf "FL=Res_v1 done in %o sec\n", Cputime(tt);
 PrintDegs("FL", FL);
 
 // -----------------------------------------------------------------------------
-// 4. Right leg: reduce fr early, Res_v3, reduce C, Res_u3.
+// 4. Backward elimination: reduce fr, eliminate v3, reduce C, then eliminate u3.
 // -----------------------------------------------------------------------------
 print "==== Right leg ====";
 
