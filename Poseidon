@@ -58,7 +58,7 @@ def spow(a, e):
 
 
 # ----------------------------------------------------------------------
-# Poseidon2b instance
+# Small-scale Poseidon2b instance
 # ----------------------------------------------------------------------
 
 t = 6
@@ -399,7 +399,7 @@ def cico2_attack(m):
         if poly_eval(G, x1) == 0
     ]
 
-    # Back-substitution on the selected fiber.
+    # Back-substitution on the fixed fiber.
     #
     # Record the size of each recovery frontier.  These statistics make
     # explicit how many candidates survive successive resultant elimination
