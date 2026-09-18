@@ -515,11 +515,11 @@ function BuildEquations(b0, b1, b2, b3, alpha, M, Mi, sigma, eps)
     R<v1,u1,v2,u2,v3,u3,v4,u4,v5,u5> := PolynomialRing(F, 10);
     K := FieldOfFractions(R);
 
-    // Input boundary at link 2, Eq. (8), multiplied by v1*u1.
+    // Input boundary at link 2, Eq. (9), multiplied by v1*u1.
     cL := alpha + Mi[2,1]*sigma[1][1] + Mi[2,2]*sigma[1][2];
     fl := cL*v1*u1 + Mi[2,1]*u1 + Mi[2,2]*v1;
 
-    // Input chain, Eq. (4), link 2 -> link 4.
+    // Input chain, Eq. (5), link 2 -> link 4.
     P1 := (K!Mi[1,1])*(K!1/(K!v2) + K!(sigma[2][1])) +
           (K!Mi[1,2])*(K!1/(K!u2) + K!(sigma[2][2]));
     P2 := (K!Mi[2,1])*(K!1/(K!v2) + K!(sigma[2][1])) +
@@ -533,7 +533,7 @@ function BuildEquations(b0, b1, b2, b3, alpha, M, Mi, sigma, eps)
     fv1 := R!Numerator(B3map(K!v1, b0, b1, b2, b3) + rhs_v1);
     fu1 := R!Numerator(B3map(K!u1, b0, b1, b2, b3) + rhs_u1);
 
-    // Input chain, Eq. (4), link 4 -> link 6.
+    // Input chain, Eq. (5), link 4 -> link 6.
     Q1 := (K!Mi[1,1])*(K!1/(K!v3) + K!(sigma[3][1])) +
           (K!Mi[1,2])*(K!1/(K!u3) + K!(sigma[3][2]));
     Q2 := (K!Mi[2,1])*(K!1/(K!v3) + K!(sigma[3][1])) +
@@ -547,7 +547,7 @@ function BuildEquations(b0, b1, b2, b3, alpha, M, Mi, sigma, eps)
     fv2 := R!Numerator(B3map(K!v2, b0, b1, b2, b3) + rhs_v2);
     fu2 := R!Numerator(B3map(K!u2, b0, b1, b2, b3) + rhs_u2);
 
-    // Central link, Eq. (5), link 6 -> link 7.
+    // Central link, Eq. (6), link 6 -> link 7.
     den_v4 := (K!M[1,1])*B3map(K!v3, b0, b1, b2, b3) +
               (K!M[1,2])*B3map(K!u3, b0, b1, b2, b3) + K!(eps[3][1]);
     den_u4 := (K!M[2,1])*B3map(K!v3, b0, b1, b2, b3) +
@@ -556,7 +556,7 @@ function BuildEquations(b0, b1, b2, b3, alpha, M, Mi, sigma, eps)
     fv4 := R!Numerator(den_v4*B3map(K!v4, b0, b1, b2, b3) + K!1);
     fu4 := R!Numerator(den_u4*B3map(K!u4, b0, b1, b2, b3) + K!1);
 
-    // Output chain, Eq. (3), link 7 -> link 9.
+    // Output chain, Eq. (4), link 7 -> link 9.
     r1 := (K!M[1,1])*(K!v4) + (K!M[1,2])*(K!u4) + K!(sigma[4][1]);
     r2 := (K!M[2,1])*(K!v4) + (K!M[2,2])*(K!u4) + K!(sigma[4][2]);
 
@@ -568,7 +568,7 @@ function BuildEquations(b0, b1, b2, b3, alpha, M, Mi, sigma, eps)
     fv5 := R!Numerator(w1*B3map(K!v5, b0, b1, b2, b3) + K!1);
     fu5 := R!Numerator(w2*B3map(K!u5, b0, b1, b2, b3) + K!1);
 
-    // Output boundary, Eq. (12), link 9.
+    // Output boundary, Eq. (8), link 9.
     t1 := (K!M[1,1])*(K!v5) + (K!M[1,2])*(K!u5) + K!(sigma[5][1]);
     t2 := (K!M[2,1])*(K!v5) + (K!M[2,2])*(K!u5) + K!(sigma[5][2]);
 
