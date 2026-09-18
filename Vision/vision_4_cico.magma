@@ -520,7 +520,7 @@ function BuildEquations(b0, b1, b2, b3, alpha, M, Mi, sigma, eps)
     R<v1,u1,v2,u2,v3,u3,v4,u4> := PolynomialRing(F, 8);
     K := FieldOfFractions(R);
 
-    // Input boundary at link 2, Eq. (8), multiplied by v1*u1.
+    // Input boundary at link 2, Eq. (9), multiplied by v1*u1.
     cL := alpha + Mi[2,1]*sigma[1][1] + Mi[2,2]*sigma[1][2];
     fl := cL*v1*u1 + Mi[2,1]*u1 + Mi[2,2]*v1;
 
@@ -562,7 +562,7 @@ function BuildEquations(b0, b1, b2, b3, alpha, M, Mi, sigma, eps)
     fv4 := R!Numerator(w1*B3map(K!v4, b0, b1, b2, b3) + K!1);
     fu4 := R!Numerator(w2*B3map(K!u4, b0, b1, b2, b3) + K!1);
 
-    // Output boundary, Eq. (12), link 7.  AddC_7 = sigma[4], AddC_8 = eps[4].
+    // Output boundary, Eq. (8), link 7.  AddC_7 = sigma[4], AddC_8 = eps[4].
     t1 := (K!M[1,1])*(K!v4) + (K!M[1,2])*(K!u4) + K!(sigma[4][1]);
     t2 := (K!M[2,1])*(K!v4) + (K!M[2,2])*(K!u4) + K!(sigma[4][2]);
 
