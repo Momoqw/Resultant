@@ -120,7 +120,7 @@ function BruteForceCICO(b0, b1, b2, b3, Lmati, M, sigma, eps)
 end function;
 
 // -----------------------------------------------------------------------------
-// Back-substitution from the retained central pair.
+// Back-substitution from the middle state.
 // -----------------------------------------------------------------------------
 function InvStep(S, s, b0, b1, b2, b3, Lmati, Mi, AC)
     p1 := Mi[1,1]*(S[1]+AC[s][1]) + Mi[1,2]*(S[2]+AC[s][2]);
@@ -331,7 +331,7 @@ PrintMem("after importing FL/FR");
 delete leftPayload;
 delete rightPayload;
 // -----------------------------------------------------------------------------
-// 5. Final bivariate resultant at the central pair, then root finding.
+// 5. Final bivariate resultant at the middle state, then root finding.
 // -----------------------------------------------------------------------------
 print "==== Final resultant and root finding ====";
 
